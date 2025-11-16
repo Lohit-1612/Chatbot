@@ -1,0 +1,279 @@
+import os
+import google.generativeai as genai
+from PIL import Image
+import io
+import base64
+import requests
+import json
+import streamlit as st
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+class MultiModalChatbot:
+    def __init__(self):
+        # Try multiple ways to get the API key
+        self.api_key = self._get_api_key()
+        
+        if not self.api_key:
+            raise ValueError(
+                "GOOGLE_API_KEY not found. Please set it in .env file or enter it in the sidebar."
+            )
+        
+        genai.configure(api_key=self.api_key)
+        
+        # Initialize models
+        self.text_model = genai.GenerativeModel('gemini-pro')
+        self.vision_model = genai.GenerativeModel('gemini-pro-vision')
+        
+        # Start chat session
+        self.chat = self.text_model.start_chat(history=[])
+    
+    def _get_api_key(self):
+        """Try multiple methods to get the API key"""
+        # Method 1: Environment variable
+        api_key = os.getenv('GOOGLE_API_KEY')
+        
+        # Method 2: Streamlit secrets
+        try:
+            if not api_key and hasattr(st, 'secrets'):
+                api_key = st.secrets.get('GOOGLE_API_KEY')
+        except:
+            pass
+            
+        # Method 3: User input (will be handled in the UI)
+        return api_key
+    
+    def process_text_input(self, user_input):
+        """Process text-only input and return response"""
+        try:
+            response = self.chat.send_message(user_input)
+            return response.text
+        except Exception as e:
+            return f"Error processing text: {str(e)}"
+    
+    def process_image_input(self, image, prompt=None):
+        """Process image input with optional text prompt"""
+        try:
+            if prompt:
+                response = self.vision_model.generate_content([prompt, image])
+            else:
+                response = self.vision_model.generate_content([
+                    "Describe this image in detail and provide any relevant information.",
+                    image
+                ])
+            return response.text
+        except Exception as e:
+            return f"Error processing image: {str(e)}"
+    
+    def process_multimodal_input(self, text_prompt, image):
+        """Process combined text and image input"""
+        try:
+            response = self.vision_model.generate_content([text_prompt, image])
+            return response.text
+        except Exception as e:
+            return f"Error processing multimodal input: {str(e)}"
+    
+    def generate_image_description(self, prompt):
+        """Generate detailed image description"""
+        try:
+            response = self.text_model.generate_content(
+                f"Create a detailed visual description for image generation based on: {prompt}. "
+                "Include specific details about colors, composition, style, lighting, and key elements. "
+                "Make it comprehensive enough for an AI image generator to create the image."
+            )
+            return response.text
+        except Exception as e:
+            return f"Error generating image description: {str(e)}"
+
+def main():
+    st.set_page_config(
+        page_title="Multi-Modal AI Chatbot",
+        page_icon="🤖",
+        layout="wide"
+    )
+    
+    st.title("🤖 Multi-Modal AI Chatbot")
+    st.markdown("Chat with AI that understands both text and images!")
+    
+    # API Key setup in sidebar
+    with st.sidebar:
+        st.header("🔑 API Configuration")
+        
+        # Option 1: Use secrets.toml
+        st.subheader("Option 1: Use secrets.toml")
+        st.markdown("""
+        Create `.streamlit/secrets.toml` file with:
+        ```toml
+        GOOGLE_API_KEY = "your_api_key_here"
+        ```
+        """)
+        
+        # Option 2: Manual input
+        st.subheader("Option 2: Enter API Key")
+        manual_api_key = st.text_input(
+            "Or enter your Google API key:",
+            type="password",
+            placeholder="sk-proj-...",
+            help="Get your API key from https://makersuite.google.com/app/apikey"
+        )
+        
+        if manual_api_key:
+            os.environ['GOOGLE_API_KEY'] = manual_api_key
+            st.success("API key set successfully!")
+        
+        st.markdown("---")
+        st.header("Settings")
+        analysis_type = st.selectbox(
+            "Image Analysis Type",
+            ["general", "objects", "text", "colors", "context"],
+            help="Choose how to analyze uploaded images"
+        )
+        
+        st.markdown("---")
+        st.markdown("### How to use:")
+        st.markdown("1. 🔑 Set up your API key first")
+        st.markdown("2. 💬 Type text messages to chat")
+        st.markdown("3. 🖼️ Upload images for analysis")
+        st.markdown("4. 🎨 Ask to generate image descriptions")
+    
+    # Initialize chatbot with error handling
+    if 'chatbot' not in st.session_state:
+        try:
+            # Check if we have an API key
+            api_key = os.getenv('GOOGLE_API_KEY') or manual_api_key
+            
+            if not api_key:
+                st.warning("👆 Please enter your Google API key in the sidebar to continue.")
+                st.stop()
+            
+            st.session_state.chatbot = MultiModalChatbot()
+            st.session_state.messages = []
+            st.success("✅ Chatbot initialized successfully!")
+            
+        except Exception as e:
+            st.error(f"❌ Failed to initialize chatbot: {e}")
+            st.info("💡 Make sure you've entered a valid Google API key in the sidebar.")
+            st.stop()
+    
+    # Main chat interface
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        # Display chat history
+        st.subheader("💬 Conversation")
+        
+        if not st.session_state.messages:
+            st.info("💡 Start by sending a message or uploading an image!")
+        
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                if message["type"] == "text":
+                    st.write(message["content"])
+                elif message["type"] == "image":
+                    st.image(message["content"], caption="Uploaded Image", use_column_width=True)
+                elif message["type"] == "response":
+                    st.write(message["content"])
+        
+        # Image upload
+        uploaded_file = st.file_uploader(
+            "📁 Upload an image for analysis",
+            type=['png', 'jpg', 'jpeg', 'webp'],
+            key="file_uploader"
+        )
+    
+    with col2:
+        st.subheader("⚡ Quick Actions")
+        
+        if st.button("🔄 Clear Conversation", use_container_width=True):
+            st.session_state.messages = []
+            st.session_state.chatbot.chat = st.session_state.chatbot.text_model.start_chat(history=[])
+            st.rerun()
+        
+        st.markdown("---")
+        
+        # Quick prompts
+        st.subheader("🚀 Quick Prompts")
+        
+        quick_prompts = [
+            "Explain quantum computing",
+            "Tell me a joke",
+            "What's the weather like?",
+            "Help me plan a trip"
+        ]
+        
+        for prompt in quick_prompts:
+            if st.button(prompt, use_container_width=True):
+                st.session_state.quick_prompt = prompt
+                st.rerun()
+    
+    # Process uploaded image
+    if uploaded_file is not None:
+        try:
+            image = Image.open(uploaded_file)
+            
+            # Display uploaded image
+            st.session_state.messages.append({
+                "role": "user",
+                "content": image,
+                "type": "image"
+            })
+            
+            # Analyze image
+            with st.spinner("🔍 Analyzing image..."):
+                analysis = st.session_state.chatbot.analyze_image_content(image, analysis_type)
+                
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": f"**Image Analysis ({analysis_type}):**\n\n{analysis}",
+                    "type": "response"
+                })
+            
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"❌ Error processing image: {e}")
+    
+    # Chat input
+    user_input = st.chat_input("💭 Type your message here...")
+    
+    # Process quick prompt if set
+    if 'quick_prompt' in st.session_state:
+        user_input = st.session_state.quick_prompt
+        del st.session_state.quick_prompt
+    
+    # Process text input
+    if user_input:
+        # Add user message to history
+        st.session_state.messages.append({
+            "role": "user",
+            "content": user_input,
+            "type": "text"
+        })
+        
+        # Check if user wants image generation
+        if any(keyword in user_input.lower() for keyword in [
+            'generate image', 'create image', 'show me', 'describe image',
+            'image of', 'picture of'
+        ]):
+            with st.spinner("🎨 Creating image description..."):
+                response = st.session_state.chatbot.generate_image_description(user_input)
+                response_text = f"**Image Description:**\n\n{response}"
+        else:
+            # Process regular text input
+            with st.spinner("🤔 Thinking..."):
+                response = st.session_state.chatbot.process_text_input(user_input)
+                response_text = response
+        
+        # Add assistant response to history
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": response_text,
+            "type": "response"
+        })
+        
+        st.rerun()
+
+if __name__ == "__main__":
+    main()
