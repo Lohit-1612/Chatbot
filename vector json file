@@ -1,0 +1,15 @@
+{
+  "vector_database": {
+    "index_path": "nullclass_vector_index.faiss",
+    "metadata_path": "nullclass_metadata.pkl",
+    "vector_dimension": 384
+  },
+  "chatbot": {
+    "similarity_threshold": 0.3,
+    "max_history_length": 5,
+    "default_response": "I'm sorry, I don't have specific information about that in my knowledge base. Please contact Nullclass support for more detailed assistance."
+  },
+  "data_sources": {
+    "csv_file": "dataset.csv"
+  }
+}
