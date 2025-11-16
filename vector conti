@@ -1,0 +1,118 @@
+import json
+import re
+from typing import List, Dict, Any
+from datetime import datetime
+
+class NullclassChatbot:
+    def __init__(self, vector_db, similarity_threshold: float = 0.3):  # Lowered threshold
+        self.vector_db = vector_db
+        self.similarity_threshold = similarity_threshold
+        self.conversation_history = []
+        
+        # Load default responses
+        with open('config.json', 'r') as f:
+            config = json.load(f)
+            self.default_response = config['chatbot']['default_response']
+    
+    def get_response(self, user_input: str) -> str:
+        """Generate response for user input"""
+        print(f"🔍 Searching for: '{user_input}'")  # Debug print
+        
+        # Clean the input
+        cleaned_input = self._clean_input(user_input)
+        
+        # Search for relevant information
+        search_results = self.vector_db.search(cleaned_input, k=5)  # Increased k
+        
+        print(f"📈 Found {len(search_results)} results")  # Debug print
+        for i, result in enumerate(search_results):
+            print(f"  Result {i+1}: score={result['similarity_score']:.4f}")
+        
+        # Filter results by similarity threshold (now lower)
+        relevant_results = [
+            result for result in search_results 
+            if result['similarity_score'] > self.similarity_threshold
+        ]
+        
+        print(f"✅ {len(relevant_results)} results above threshold {self.similarity_threshold}")  # Debug print
+        
+        # Generate response
+        if relevant_results:
+            response = self._generate_informed_response(cleaned_input, relevant_results)
+        else:
+            # Even if no results meet threshold, use the best one if we have any results
+            if search_results:
+                best_result = search_results[0]
+                print(f"🎯 Using best result with score: {best_result['similarity_score']:.4f}")
+                response = self._generate_informed_response(cleaned_input, [best_result])
+            else:
+                response = self.default_response
+            
+        # Update conversation history
+        self._update_conversation_history(user_input, response)
+        
+        return response
+    
+    def _clean_input(self, text: str) -> str:
+        """Clean and preprocess input text"""
+        # Convert to lowercase
+        text = text.lower()
+        # Remove extra whitespace
+        text = re.sub(r'\s+', ' ', text).strip()
+        # Remove punctuation for better matching
+        text = re.sub(r'[^\w\s]', '', text)
+        return text
+    
+    def _generate_informed_response(self, user_input: str, relevant_results: List[Dict]) -> str:
+        """Generate response based on relevant information"""
+        # Use the most relevant result
+        best_match = relevant_results[0]
+        
+        print(f"🏆 Best match score: {best_match['similarity_score']:.4f}")  # Debug print
+        
+        # Return the answer directly from the CSV
+        if 'answer' in best_match:
+            response = best_match['answer']
+        else:
+            # Fallback to content extraction
+            content = best_match.get('content', '')
+            if 'Answer:' in content:
+                response = content.split('Answer:')[-1].strip()
+            else:
+                response = content
+        
+        # Add confidence indicator
+        if best_match['similarity_score'] > 0.7:
+            response = f"🔍 I found a perfect match for your question!\n\n{response}"
+        elif best_match['similarity_score'] > 0.4:
+            response = f"📚 Based on our knowledge base:\n\n{response}"
+        else:
+            response = f"💡 Here's some related information:\n\n{response}"
+            
+        return response
+    
+    def _update_conversation_history(self, user_input: str, response: str):
+        """Update conversation history"""
+        self.conversation_history.append({
+            'timestamp': datetime.now().isoformat(),
+            'user': user_input,
+            'bot': response
+        })
+        
+        # Keep only last 5 conversations
+        if len(self.conversation_history) > 5:
+            self.conversation_history = self.conversation_history[-5:]
+    
+    def get_conversation_history(self) -> List[Dict]:
+        """Get conversation history"""
+        return self.conversation_history
+    
+    def get_system_stats(self) -> Dict[str, Any]:
+        """Get system statistics"""
+        db_stats = self.vector_db.get_stats()
+        return {
+            'knowledge_base_documents': db_stats['total_documents'],
+            'conversation_history_length': len(self.conversation_history),
+            'similarity_threshold': self.similarity_threshold,
+            'last_activity': self.conversation_history[-1]['timestamp'] if self.conversation_history else 'No activity'
+        }
